@@ -1,0 +1,9 @@
+[project]
+name = "uart-draw"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.10.3",
+    "pyserial>=3.5",
+]

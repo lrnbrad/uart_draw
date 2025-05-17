@@ -1,13 +1,13 @@
-import queue
 import threading
 import time
+from collections import deque
 
-import numpy as np
+import matplotlib
 import serial
-from fontTools.merge.util import current_time
 from matplotlib import pyplot as plt
 from matplotlib.animation import FuncAnimation
-import matplotlib
+
+from plot_utils import update_plot, setup_plots
 
 matplotlib.use("TkAgg")
 
@@ -15,10 +15,15 @@ matplotlib.use("TkAgg")
 PORT = '/dev/ttyACM0'
 BAUD_RATE = 115200
 SYNC_BIT = 0xAA
-MAX_X_POINTS = 10000
+
+SAMPLE_PERIOD = 0.001  # 1 ms, this related to timer interrupt by STM32
+WINDOW_SECONDS = 5
+BUF_LEN = int(WINDOW_SECONDS / SAMPLE_PERIOD)
 
 ''' Shared Objects between Threads '''
-adc_queue = queue.Queue()
+# Queue used for window, use double queue to perform better performance
+adc_time = deque(maxlen=BUF_LEN)  # time stamps (seconds)
+adc_queue = deque(maxlen=BUF_LEN)  # ADC values (0-4095)
 
 # This event can let the threads know when to start working.
 ready_event = threading.Event()
@@ -33,63 +38,38 @@ def uart_reader(port: str = PORT, baudrate: int = BAUD_RATE):
     Continuous try to open serial port,
     and fill [adc_queue] with latest 13-bit data, 100 samples.
     """
+    global start_time
     while not stop_event.is_set():
         try:
-            with serial.Serial(port, baudrate, timeout=0.1) as ser:
+            with serial.Serial(port, baudrate, timeout=1) as ser:
                 print(f"[✓] Connected to {port} @ {baudrate}")
+                start_time = time.time()
                 ready_event.set()  # start GUI
                 while not stop_event.is_set():
                     # Wait for [SYNC_BIT]
                     byte = ser.read(1)
-                    if not byte or byte != SYNC_BIT.to_bytes():  # if read unsuccess or first byte was not 0xAA
-                        print(f'Actual SYNC received {byte}')
+                    if not byte or byte != SYNC_BIT.to_bytes():
+                        # if read unsuccess or first byte was not 0xAA
                         continue
                     row_data = ser.read(2)
                     if len(row_data) != 2:
+                        # Data is not complete
                         print(f'Actual Data received {row_data}')
                         continue
                     adc_value = int.from_bytes(row_data, 'little', signed=False) & 0x0FFF
-                    print(f"[Debug]: adc_value: {adc_value}")
-                    adc_queue.put(adc_value)
+                    # print(f"[Debug]: adc_value: {adc_value}")
+                    t = time.time() - start_time
+                    adc_time.append(t)
+                    adc_queue.append(adc_value)
+
         except (serial.SerialException, OSError) as e:
             ready_event.clear()
             print(f"Serial error: {e}, Retrying in 1s..., press CTRL-C to quit")
             time.sleep(1)
 
 
-# Plot Setup (main thread)
-def animator(frame: int):
-    """ Update called by FuncAnimation every `interval` seconds.`"""
-    n = adc_queue.qsize()  # get size of queue (approx.)
-
-    if n:
-        global start_time
-        data = np.empty(n, dtype=np.uint16)
-        for i in range(n):
-            data[i] = adc_queue.get()
-        current_time = time.time()
-        elapsed_time = [current_time - start_time] * n
-        # xs.extend(range(xs[-1] + 1, xs[-1] + 1 + n))
-        xs.extend(elapsed_time)
-        ys.extend(data)
-
-        # strip to the last MAX_X_POINTS points
-        xs_trim = xs[-MAX_X_POINTS:]
-        ys_trim = ys[-MAX_X_POINTS:]
-
-        line.set_data(xs_trim, ys_trim)
-        ax.set_xlim(xs_trim[0], xs_trim[-1])  # scroll x-axis
-    return line,
-
-    # while not adc_queue.empty():
-    #
-    #     ys.append(adc_queue.get())
-    #     xs.append(len(xs))
-    # line.set_data(xs[-MAX_X_POINTS:], ys[-MAX_X_POINTS:])  # use both x & y
-    # ax.relim()
-    # ax.autoscale_view()
-    # return line,
-
+# Setup plots
+fig, axs, line, line_diff = setup_plots()
 
 if __name__ == '__main__':
     # initialise with a single dummy point
@@ -101,15 +81,13 @@ if __name__ == '__main__':
         ready_event.wait()
         start_time = time.time()
 
-        fig, ax = plt.subplots()
-        line, = ax.plot([], [])
-        ax.set_ylim(0, 4095)
-        ax.set_xlabel("Time [s]")
-        ax.set_ylabel("ADC value (0~4095)")
-        ani = FuncAnimation(fig, animator, interval=50)
+        ani = FuncAnimation(fig, update_plot,
+                            fargs=(line, line_diff, axs, adc_time, adc_queue, WINDOW_SECONDS),
+                            interval=40)
 
         plt.show()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
+        stop_event.set()
         pass
     finally:
         stop_event.set()
