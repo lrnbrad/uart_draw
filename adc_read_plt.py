@@ -7,7 +7,7 @@ import serial
 from matplotlib import pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-from plot_utils import update_plot, setup_plots
+from plot_utils import update_plots, setup_plots
 
 matplotlib.use("TkAgg")
 
@@ -69,7 +69,7 @@ def uart_reader(port: str = PORT, baudrate: int = BAUD_RATE):
 
 
 # Setup plots
-fig, axs, line, line_diff = setup_plots()
+fig, axs, line, line_diff, line_filtered, line_diff_filtered = setup_plots()
 
 if __name__ == '__main__':
     # initialise with a single dummy point
@@ -81,9 +81,12 @@ if __name__ == '__main__':
         ready_event.wait()
         start_time = time.time()
 
-        ani = FuncAnimation(fig, update_plot,
-                            fargs=(line, line_diff, axs, adc_time, adc_queue, WINDOW_SECONDS),
-                            interval=40)
+        ani = FuncAnimation(
+            fig,
+            update_plots,
+            fargs=(line, line_diff, line_filtered, line_diff_filtered, axs, adc_time, adc_queue, WINDOW_SECONDS),
+            interval=40,
+        )
 
         plt.show()
     except (KeyboardInterrupt, SystemExit):
