@@ -7,7 +7,7 @@ import serial
 from matplotlib import pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-from plot_utils import update_plots, setup_plots
+from plot_utils import update_plots, setup_plots, adc_lock
 
 matplotlib.use("TkAgg")
 
@@ -59,8 +59,9 @@ def uart_reader(port: str = PORT, baudrate: int = BAUD_RATE):
                     adc_value = int.from_bytes(row_data, 'little', signed=False) & 0x0FFF
                     # print(f"[Debug]: adc_value: {adc_value}")
                     t = time.time() - start_time
-                    adc_time.append(t)
-                    adc_queue.append(adc_value)
+                    with adc_lock:
+                        adc_time.append(t)
+                        adc_queue.append(adc_value)
 
         except (serial.SerialException, OSError) as e:
             ready_event.clear()
